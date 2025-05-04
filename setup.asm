@@ -196,8 +196,8 @@ ADD_R_HL		= $de1a
 ADD_R_HH		= $de1b
 
 ;Random NUmber Generator
-Random_Reg		= $d6a6
-Random_L		= $d6a4
+Random_Reg		= $d6a6                     ; control register enable
+Random_L		= $d6a4                     ; random output low
 
 ; Misc Variables for Indirect Indexing
 ptr_src			= $80						; A pointer to read data

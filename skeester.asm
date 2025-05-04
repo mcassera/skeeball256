@@ -6,13 +6,13 @@
 .include "setup.asm"		                ; all of our initial settings
 
 tmp = $84
-tx 	= $85
-ty	= $86
-bx	= $87 
-by	= $88 
-aa	= $89 
-bb	= $8a 
-cc 	= $8b
+tx 	= $86
+ty	= $87
+bx	= $88 
+by	= $89 
+aa	= $8a 
+bb	= $8c 
+cc 	= $8e
 
 *=$a0										; Set up buffer for Kernel communication
 .dsection zp						        ; Define position for zp (zero page)
@@ -112,9 +112,11 @@ SC:
 
 ; ************************************************************************************************************************************
 
-		;jsr setSprites
+; turn on random number generator
+		lda #$01
+		sta Random_Reg
 
-
+; ************************************************************************************************************************************
 
 		;POWER indicator sprite
 		lda #%01010001 						; 16x16 sprite, layer 2, lut 0, enable on
@@ -428,6 +430,8 @@ UpdateScreen:
 		beq jumpBallJmp
 		cmp #$05
 		beq checkBallPosJmp
+		cmp #$10
+		beq ballBounceJmp
 		rts
 throwBallJmp:
 		jmp throwBall
@@ -437,6 +441,8 @@ checkBallPosJmp:
 		jmp checkBallPos
 addPowerJmp:
 		jmp addPower
+ballBounceJmp:
+		jmp ballBounce
 
 aimBall:
 		lda playDir
@@ -610,58 +616,159 @@ sameBall:
 doneJumpBall:
 		ldx #$00
 		inc ballState
+		ldx #$00
 checkBallPos:
-		;lda 
+		lda playXLO
+		sta bx
+		lda playYLO
+		sta by
+		lda scoreHoleX,X
+		sta tx
+		lda scoreHoleY,X
+		sta ty
 ; ************************************************************************************************************************************
 collisionCheck:
 		jsr checkX
 		jsr multiplier
 		sta aa 
+		sty aa+1
 		jsr checkY
 		jsr multiplier
 		sta bb
+		sty bb+1
+		clc											;a^2 + b^2 = c^2
+		lda aa
+		adc bb
+		sta cc
+		lda aa+1
+		adc bb+1
+		sta cc+1
+		bne noChance
+		lda cc
+		cmp #$09							;This is the radius of hole - radius of ball squared.
+		bcc scored
+		cmp #$50							; this is hole radius+ball radius for collision with edge.
+		bcc bounce
+noChance:
+		inx
+		cpx #$07
+		bcc checkBallPos
+		stz ballState ;temp
+		rts
+scored:
+		lda holeValue,X
+		sta ballScore
+		stz ballScore+1
+		asl ballScore
+		rol ballScore+1
+		asl ballScore
+		rol ballScore+1
+		asl ballScore
+		rol ballScore+1
+		asl ballScore
+		rol ballScore+1
+		jmp updateScore	
+bounce:
+		; make a bounce noise
+		lda Random_L
+		sta bounceVX
+		lda Random_L+1
+		sta bounceVY
+		stz Random_Reg
+		lda #$01
+		sta Random_Reg
+		lda Random_L
+		and #%00000111
+		adc #$05
+		sta bounceSteps
+		lda Random_L+1
+		and #%00000001
+		sta bounceDir
+		lda #$10
+		sta ballState
+		rts
+
+ballBounce:
+		lda bounceDir
+		bne bounceLeft
+bounceRight:
+		clc
+		lda playXFR
+		adc bounceVX
+		sta playXFR
+		lda playXLO
+		adc #$00
+		sta playXLO
+		bra bounceY 
+bounceLeft:
+		sec
+		lda playXFR
+		sbc bounceVX
+		sta playXFR
+		lda playXLO
+		sbc #$00
+		sta playXLO
+bounceY:
+		clc
+		lda playYFR
+		adc bounceVY
+		sta playYFR
+		lda playYLO
+		adc #$00
+		sta playYLO
+placeBounce:
+		ldx ballSprite
+		lda playXLO
+		sta VKY_SP0+SP_POS_X_L,X
+		lda playYLO
+		sta VKY_SP0+SP_POS_Y_L,x
+		dec bounceSteps
+		lda bounceSteps
+		bpl bounceDone
+		lda #$05
+		sta ballState
+		ldx #$00
+bounceDone:
+		rts
+
+
 checkX:
 		lda bx 
-		cmp tx 
-		bcc XlessT
-TlessX:
-		lda tx
-		ldy bx 
+		ldy tx 
 		jsr subtract
-		rts
-XlessT:
-		lda bx
-		ldy tx
-		jsr subtract
+		bpl skipReverse
+		eor #$ff 
+		clc
+		adc #$01
+skipReverse
 		rts
 checkY
 		lda by
-		cmp ty 
-		bcc YlessT
-TlessY:
-		lda ty
-		ldy by
+		ldy ty 
 		jsr subtract
-		rts
-YlessT:
-		lda by
-		ldx ty
-		jsr subtract
+		bpl skipReverse
+		eor #$ff
+		clc
+		adc #$01
 		rts
 
 subtract:
-		sty tmp 
-		sec
-		sbc tmp
 		sta tmp
+		sty tmp+1 
+		sec
+		lda tmp
+		sbc tmp+1
+		sta tmp
+		
 		rts
 
 multiplier:
 		sta MULU_A_L
 		sta MULU_B_L
 		stz MULU_A_H
-		stz MULU_B_L
+		stz MULU_B_H
 		lda MULU_LL
+		ldy MULU_LH
 		rts
 		; ************************************************************************************************************************************
 checkSize:
@@ -711,7 +818,7 @@ updateScore:
 		lda hex,x 
 		sta $c000
 		lda score+1
-		and #$f0
+		and #$0f
 		tax 
 		lda hex,x 
 		sta $c001
@@ -724,11 +831,15 @@ updateScore:
 		lda hex,x 
 		sta $c002
 		lda score
-		and #$f0
+		and #$0f
 		tax 
 		lda hex,x 
 		sta $c003		
 		stz MMU_IO_CTRL
+		stz ballState
+		ldx ballSprite
+		lda #$00
+		sta VKY_SP0,x
 		rts
 ; ************************************************************************************************************************************
 SetTimer:	
@@ -847,6 +958,11 @@ ZspeedLO		.byte $00
 VspeedFR:		.byte $00
 VspeedLO:		.byte $00
 vertSteps:		.byte $00
+
+bounceVX:		.byte $00
+bounceVY:		.byte $00
+bounceSteps:	.byte $00
+bounceDir:		.byte $00
 
 ballState:		.byte $00
 ball_in_play:	.byte $08
